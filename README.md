@@ -1,6 +1,6 @@
 # Onlinekommentar Python Client
 
-**Independent Python client for accessing the public [Onlinekommentar](https://onlinekommentar.ch) APIs more easily.**
+**Python client for accessing the public [Onlinekommentar](https://onlinekommentar.ch) APIs more easily.**
 
 This project is not official, associated with, or affiliated with Onlinekommentar. It was developed independently as a convenience wrapper around the publicly documented Onlinekommentar APIs.
 
