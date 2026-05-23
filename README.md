@@ -144,7 +144,7 @@ The client does not scrape website pages and does not cover private or undocumen
 This independent client accesses public Onlinekommentar endpoints.
 
 > [!IMPORTANT]
-> Please be kind to the server, keep rate limiting enabled for batch work, mention Onlinekommentar as the data source when appropriate, and avoid sending confidential or personal data to public endpoints. **Also consider contributing to [Onlinekommentar](https://onlinekommentar.ch/en/ueber-onlinekommentar.ch/).**
+> Please be kind to the server, keep rate limiting enabled for batch work, mention Onlinekommentar as the data source when appropriate, and avoid sending confidential or personal data to public endpoints. **Also consider contributing to [Onlinekommentar](https://onlinekommentar.ch/en/ueber-onlinekommentar).**
 
 ## Development
 
