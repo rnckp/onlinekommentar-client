@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from onlinekommentar.models import (
     Commentary,
@@ -16,8 +17,8 @@ def test_commentary_search_result_parses_paginated_response() -> None:
                 "title": "Art. 10 FDTA",
                 "date": "2026-05-18",
                 "language": "en",
-                "authors": [{"id": "author-1", "name": "Nicolas Grieder"}],
-                "editors": [{"id": "editor-1", "name": "Peter Hongler"}],
+                "authors": [{"id": "author-1", "name": "Example Author"}],
+                "editors": [{"id": "editor-1", "name": "Example Editor"}],
                 "legislative_act": {
                     "id": "act-1",
                     "title": "Federal Act on Direct Federal Tax",
@@ -47,14 +48,14 @@ def test_commentary_search_result_parses_paginated_response() -> None:
             authors=[
                 Person(
                     person_id="author-1",
-                    name="Nicolas Grieder",
+                    name="Example Author",
                     raw=payload["data"][0]["authors"][0],
                 )
             ],
             editors=[
                 Person(
                     person_id="editor-1",
-                    name="Peter Hongler",
+                    name="Example Editor",
                     raw=payload["data"][0]["editors"][0],
                 )
             ],
@@ -109,17 +110,68 @@ def test_commentary_parses_single_resource_response() -> None:
 
 
 @pytest.mark.parametrize(
-    ("model", "payload", "message"),
+    ("model", "payload", "field"),
     [
-        (Person, {}, "Missing required field: name"),
-        (LegislativeAct, {}, "Missing required field: title"),
-        (Commentary, {"title": "Art. 10 FDTA"}, "Missing required field: id"),
+        (Person, {}, "name"),
+        (LegislativeAct, {}, "title"),
+        (Commentary, {"title": "Art. 10 FDTA"}, "commentary_id"),
     ],
 )
 def test_models_reject_missing_required_strings(
     model: type[Person] | type[LegislativeAct] | type[Commentary],
     payload: dict[str, object],
-    message: str,
+    field: str,
 ) -> None:
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValidationError) as error:
         model.from_json(payload)
+    assert [(item["loc"], item["type"]) for item in error.value.errors()] == [((field,), "missing")]
+
+
+@pytest.mark.parametrize("items", [None, {}, "invalid", [None], [42]])
+def test_search_result_rejects_malformed_records(items: object) -> None:
+    with pytest.raises(ValueError):
+        CommentarySearchResult.from_json({"data": items})
+
+
+@pytest.mark.parametrize("field", ["authors", "editors", "additional_document_links"])
+@pytest.mark.parametrize("value", [None, {}, "invalid", [42]])
+def test_commentary_rejects_malformed_collections(field: str, value: object) -> None:
+    with pytest.raises(ValueError):
+        Commentary.from_json({"id": "example", "title": "Example", field: value})
+
+
+@pytest.mark.parametrize("value", [True, 1.5, -1])
+def test_search_result_rejects_invalid_total(value: object) -> None:
+    with pytest.raises(ValueError):
+        CommentarySearchResult.from_json({"data": [], "meta": {"total": value}})
+
+
+@pytest.mark.parametrize("field", ["links", "meta"])
+def test_search_result_rejects_malformed_envelope(field: str) -> None:
+    with pytest.raises(ValueError, match=field):
+        CommentarySearchResult.from_json({"data": [], field: []})
+
+
+def test_search_result_requires_records_field() -> None:
+    with pytest.raises(ValidationError):
+        CommentarySearchResult.from_json({"error": "Unexpected response"})
+
+
+def test_numeric_ids_and_unknown_fields_are_preserved() -> None:
+    payload = {
+        "id": 42,
+        "title": "Example",
+        "extra": {"value": 1},
+        "authors": [{"id": 7, "name": "Example Author", "extra": True}],
+    }
+    commentary = Commentary.from_json(payload)
+    assert commentary.commentary_id == "42"
+    assert commentary.authors[0].person_id == "7"
+    assert commentary.raw == payload
+    assert commentary.authors[0].raw == payload["authors"][0]
+
+
+def test_model_errors_do_not_display_input_values() -> None:
+    with pytest.raises(ValidationError) as error:
+        Person.from_json({"name": {"private": "example-sensitive-value"}})
+    assert "example-sensitive-value" not in str(error.value)

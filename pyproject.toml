@@ -3,9 +3,12 @@ name = "onlinekommentar-client"
 version = "0.1.0"
 description = "Python client for the public Onlinekommentar API"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.0",
+    "pydantic>=2.12,<3",
     "pyyaml>=6.0.3",
 ]
 
@@ -17,14 +20,22 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
 
 [tool.uv]
 exclude-newer = "7 days"
 
 [build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12.16,<0.13.0"]
+build-backend = "uv_build"
 
-[tool.setuptools.packages.find]
-include = ["onlinekommentar*"]
+[tool.uv.build-backend]
+module-name = "onlinekommentar"

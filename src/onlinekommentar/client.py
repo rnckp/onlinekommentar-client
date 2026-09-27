@@ -2,12 +2,12 @@
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from urllib.parse import quote
 
 import httpx
 
-from .config import OnlinekommentarConfig, _normalize_config_values, load_config
+from .config import OnlinekommentarConfig, load_config
 from .models import Commentary, CommentarySearchResult
 
 
@@ -42,40 +42,27 @@ class OnlinekommentarClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         """Initialize the client."""
-        self.config = load_config(config_path)
-        effective_config = OnlinekommentarConfig(
-            **_normalize_config_values(
-                {
-                    "base_url": (
-                        base_url if base_url is not None else self.config.base_url
-                    ),
-                    "timeout": timeout if timeout is not None else self.config.timeout,
-                    "rate_limit_delay": (
-                        rate_limit_delay
-                        if rate_limit_delay is not None
-                        else self.config.rate_limit_delay
-                    ),
-                    "default_language": (
-                        default_language
-                        if default_language is not None
-                        else self.config.default_language
-                    ),
-                }
-            )
+        config = load_config(config_path)
+        overrides = _params(
+            base_url=base_url,
+            timeout=timeout,
+            rate_limit_delay=rate_limit_delay,
+            default_language=default_language,
         )
+        effective_config = OnlinekommentarConfig.model_validate(config.model_dump() | overrides)
         self.config = effective_config
         self.base_url = effective_config.base_url
         self.timeout = effective_config.timeout
         self.rate_limit_delay = effective_config.rate_limit_delay
         self.default_language = effective_config.default_language
-        self._last_request_time = 0.0
+        self._last_request_time: float | None = None
         self._client = httpx.Client(
             timeout=self.timeout,
             transport=transport,
             headers={"Accept": "application/json"},
         )
 
-    def __enter__(self) -> "OnlinekommentarClient":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -88,10 +75,11 @@ class OnlinekommentarClient:
     def _rate_limit(self) -> None:
         if self.rate_limit_delay <= 0:
             return
-        elapsed = time.time() - self._last_request_time
-        if elapsed < self.rate_limit_delay:
-            time.sleep(self.rate_limit_delay - elapsed)
-        self._last_request_time = time.time()
+        if self._last_request_time is not None:
+            elapsed = time.monotonic() - self._last_request_time
+            if elapsed < self.rate_limit_delay:
+                time.sleep(self.rate_limit_delay - elapsed)
+        self._last_request_time = time.monotonic()
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -183,6 +171,12 @@ class OnlinekommentarClient:
 
     def get_commentary_raw(self, commentary_id: str) -> dict[str, Any]:
         """Return the raw JSON response for a specific commentary by ID."""
+        if (
+            not isinstance(commentary_id, str)
+            or not commentary_id.strip()
+            or commentary_id in {".", ".."}
+        ):
+            raise ValueError("commentary_id must be a nonempty identifier, not a dot segment")
         return self._get_json(f"/api/commentaries/{_quote_segment(commentary_id)}")
 
     # OAI-PMH helpers

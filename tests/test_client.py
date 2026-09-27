@@ -271,9 +271,7 @@ def test_oai_resumption_token_requests_do_not_include_other_params(
 
 
 def test_generic_oai_rejects_resumption_token_with_other_arguments() -> None:
-    client = _client_with_handler(
-        httpx.MockTransport(lambda request: httpx.Response(200))
-    )
+    client = _client_with_handler(httpx.MockTransport(lambda request: httpx.Response(200)))
 
     with pytest.raises(
         ValueError,
@@ -287,9 +285,7 @@ def test_generic_oai_rejects_resumption_token_with_other_arguments() -> None:
 
 
 def test_oai_helpers_reject_resumption_token_with_filters() -> None:
-    client = _client_with_handler(
-        httpx.MockTransport(lambda request: httpx.Response(200))
-    )
+    client = _client_with_handler(httpx.MockTransport(lambda request: httpx.Response(200)))
 
     with pytest.raises(
         ValueError,
@@ -311,3 +307,47 @@ def test_context_manager_closes_client() -> None:
 
     with pytest.raises(RuntimeError, match="Cannot send a request"):
         client.list_commentaries_raw()
+
+
+@pytest.mark.parametrize("commentary_id", ["", ".", ".."])
+def test_commentary_rejects_ids_that_escape_the_detail_route(commentary_id: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid identifiers must fail before sending a request")
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError, match="commentary_id"):
+            client.get_commentary_raw(commentary_id)
+
+
+def test_rate_limit_uses_monotonic_elapsed_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    ticks = iter([0.0, 0.05, 0.2, 1.0, 1.0])
+    sleeps: list[float] = []
+    monkeypatch.setattr("onlinekommentar.client.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("onlinekommentar.client.time.sleep", sleeps.append)
+    with OnlinekommentarClient(
+        rate_limit_delay=0.2,
+        transport=httpx.MockTransport(lambda request: _json_response({"data": []})),
+    ) as client:
+        for _ in range(3):
+            client.list_commentaries_raw()
+    assert sleeps == pytest.approx([0.15])
+
+
+@pytest.mark.parametrize("status", [404, 429, 503])
+def test_http_errors_propagate(status: int) -> None:
+    with _client_with_handler(
+        httpx.MockTransport(lambda request: httpx.Response(status))
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError) as error:
+            client.list_commentaries_raw()
+    assert error.value.response.status_code == status
+
+
+def test_request_timeout_reaches_transport() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.extensions["timeout"] == dict(connect=2.5, read=2.5, write=2.5, pool=2.5)
+        raise httpx.ReadTimeout("Timed out", request=request)
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.ReadTimeout):
+            client.list_commentaries_raw(request_timeout=2.5)

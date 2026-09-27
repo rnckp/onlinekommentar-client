@@ -33,8 +33,9 @@ with OnlinekommentarClient() as client:
     )
 
     # Fetch a specific commentary by API ID
-    commentary = client.get_commentary(search_results.commentaries[0].commentary_id)
-    print(commentary.title)
+    if search_results.commentaries:
+        commentary = client.get_commentary(search_results.commentaries[0].commentary_id)
+        print(commentary.title)
 
     # Access OAI-PMH metadata as XML
     identify_xml = client.identify()
@@ -47,12 +48,12 @@ with OnlinekommentarClient() as client:
 
 ```python
 results = client.list_commentaries(
-    language="en",          # "en", "de", "fr", "it"; defaults to configured language
+    language="en",  # "en", "de", "fr", "it"; defaults to configured language
     search="data protection",
     legislative_act="2cdeaaed-30b6-416e-a6ca-7eaef78dfd69",
-    sort="-date",           # "title", "-title", "date", "-date"
+    sort="-date",  # "title", "-title", "date", "-date"
     page=1,
-    request_timeout=60.0,   # optional per-call timeout
+    request_timeout=60.0,  # optional per-call timeout
 )
 
 commentary = client.get_commentary("c9f28a48-39a2-42c4-baa8-7024899156b1")
@@ -95,7 +96,6 @@ For unsupported or advanced OAI-PMH combinations, use the generic helper:
 ```python
 xml = client.oai(
     verb="ListRecords",
-    metadata_prefix="oai_dc",
     resumption_token="token-from-previous-response",
 )
 ```
@@ -129,6 +129,22 @@ from onlinekommentar import (
 
 The client models stable high-use shapes and preserves unknown fields in each model's `raw` attribute. Raw JSON helpers are available for consumers that need exact API payloads.
 
+Models and configuration are validated Pydantic models. Construct them with keyword
+arguments; dataclass utilities and positional construction are no longer supported.
+`from_json()` remains available. Invalid payloads raise `pydantic.ValidationError`
+(a `ValueError` subclass), with structured field errors. Malformed collections and
+pagination values are rejected rather than silently discarded or coerced. Integer
+identifiers are still accepted and normalized to strings. Models prevent field
+reassignment, but their lists and raw dictionaries remain mutable.
+
+Missing configuration files use defaults. Existing files must contain a YAML mapping
+(`{}` is valid); empty files, unknown settings, and invalid values are rejected.
+Base URLs may include a path prefix, but cannot contain credentials, queries, or fragments.
+
+Use a separate client per thread: the rate limiter is intended for sequential requests.
+HTTP failures and timeouts propagate as HTTPX exceptions. OAI-PMH responses remain raw
+XML, so callers must inspect any protocol-level `<error>` elements themselves.
+
 ## Scope
 
 This package covers the public routes documented on the Onlinekommentar API page:
@@ -153,7 +169,12 @@ uv sync
 uv run ruff format .
 uv run ruff check .
 uv run pytest -v
+uv build
 ```
+
+The package lives in `src/onlinekommentar` and uses the `uv_build` backend. Tests
+import the installed package; run `uv sync` after cloning or changing build metadata.
+Python 3.13 and newer are supported. Dependency updates are monitored by Dependabot.
 
 ## License
 

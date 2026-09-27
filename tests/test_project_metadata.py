@@ -18,9 +18,7 @@ def test_demo_notebook_starts_with_installed_package_setup_note() -> None:
     notebook_path = Path("examples/onlinekommentar_demo.ipynb")
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
     first_markdown_cell = notebook["cells"][0]
-    first_code_cell = next(
-        cell for cell in notebook["cells"] if cell["cell_type"] == "code"
-    )
+    first_code_cell = next(cell for cell in notebook["cells"] if cell["cell_type"] == "code")
     source = "".join(first_code_cell["source"])
 
     assert "Run `uv sync` from the repo root" in source

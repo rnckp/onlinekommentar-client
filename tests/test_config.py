@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from onlinekommentar.config import DEFAULT_CONFIG, OnlinekommentarConfig, load_config
 
@@ -44,8 +45,11 @@ onlinekommentar:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="Unknown config keys: unknown"):
+    with pytest.raises(ValidationError) as error:
         load_config(config_path)
+    assert [(item["loc"], item["type"]) for item in error.value.errors()] == [
+        (("unknown",), "extra_forbidden")
+    ]
 
 
 @pytest.mark.parametrize(
@@ -85,3 +89,44 @@ onlinekommentar:
 
     with pytest.raises(ValueError, match=message):
         load_config(config_path)
+
+
+@pytest.mark.parametrize("document", ["false", "0", "[]", "''", "null"])
+def test_load_config_rejects_non_mapping_documents(tmp_path: Path, document: str) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(document, encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
+        load_config(config_path)
+
+
+def test_load_config_reports_non_string_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("1: value\nother: value\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="keys"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize("suffix", ["?key=value", "#fragment", ":bad"])
+def test_config_rejects_urls_that_cannot_be_used_as_a_base(tmp_path: Path, suffix: str) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(f"base_url: https://example.test{suffix}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="base_url"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"timeout": True},
+        {"timeout": 0},
+        {"rate_limit_delay": float("inf")},
+        {"base_url": "https://user:password@example.test"},
+    ],
+)
+def test_direct_config_construction_validates_settings(settings: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        OnlinekommentarConfig(**settings)
+
+
+def test_missing_config_uses_defaults(tmp_path: Path) -> None:
+    assert load_config(tmp_path / "missing.yaml") == DEFAULT_CONFIG
