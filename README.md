@@ -8,6 +8,9 @@ This project is not official, associated with, or affiliated with Onlinekommenta
 
 ## Installation
 
+Requires Python 3.13 or newer and `uv`. From the repository root, install the
+package and declared development dependencies:
+
 ```bash
 uv sync
 ```
@@ -16,16 +19,16 @@ uv sync
 
 For a complete runnable walkthrough, see [examples/onlinekommentar_demo.ipynb](examples/onlinekommentar_demo.ipynb).
 It covers configuration, every JSON filter and raw/typed response method, bounded pagination,
-all six OAI-PMH verbs, both metadata formats, continuation tokens, error handling, and an offline
-HTTPX transport. Run cells in order; API cells make live requests and discover IDs from responses.
+all six OAI-PMH verbs, `oai_dc` and `oai_openaire` examples, continuation tokens,
+error handling, and an offline HTTPX transport. Run cells in order; API cells make live requests and discover IDs from responses.
 Automated tests execute the notebook with synthetic responses, including upstream failure cases.
 
 ```python
 from onlinekommentar import OnlinekommentarClient
 
 with OnlinekommentarClient() as client:
-    # List recent published commentaries
-    results = client.list_commentaries(language="en", page=1)
+    # List published commentaries, newest first
+    results = client.list_commentaries(language="en", sort="-date", page=1)
 
     for commentary in results.commentaries[:5]:
         print(commentary.title, commentary.html_link)
@@ -50,26 +53,32 @@ with OnlinekommentarClient() as client:
 
 ### Commentaries
 
+The following snippets assume an open `client` inside a context manager as above.
+Replace placeholder IDs and tokens with values from API responses.
+
 ```python
 results = client.list_commentaries(
     language="en",  # "en", "de", "fr", "it"; defaults to configured language
     search="data protection",
-    legislative_act="2cdeaaed-30b6-416e-a6ca-7eaef78dfd69",
+    legislative_act="act-id-from-response",
     sort="-date",  # "title", "-title", "date", "-date"
     page=1,
     request_timeout=60.0,  # optional per-call timeout
 )
 
-commentary = client.get_commentary("c9f28a48-39a2-42c4-baa8-7024899156b1")
+commentary = client.get_commentary("commentary-id-from-response")
 ```
 
-`list_commentaries()` returns a `CommentarySearchResult` with parsed `Commentary` items. `get_commentary()` returns a single `Commentary`.
+`list_commentaries()` returns a `CommentarySearchResult` with parsed `Commentary`
+items. `get_commentary()` returns a single `Commentary`. Each list call fetches one page;
+pagination is caller-managed. Omitted `sort` and `page` values are not sent, leaving
+defaults to the server. List filters are forwarded without local value validation.
 
 Raw JSON helpers are available when you need fields that are not modeled yet:
 
 ```python
 raw_page = client.list_commentaries_raw(language="de", search="Datenschutz")
-raw_commentary = client.get_commentary_raw("c9f28a48-39a2-42c4-baa8-7024899156b1")
+raw_commentary = client.get_commentary_raw("commentary-id-from-response")
 ```
 
 ### OAI-PMH
@@ -84,7 +93,7 @@ sets = client.list_sets()
 identifiers = client.list_identifiers(
     metadata_prefix="oai_dc",
     from_date="2026-01-01",
-    set_spec="legal_domain:civil-procedure",
+    set_spec="set-spec-from-ListSets",
 )
 
 records = client.list_records(metadata_prefix="oai_openaire")
@@ -93,12 +102,12 @@ records = client.list_records(metadata_prefix="oai_openaire")
 next_records = client.list_records(resumption_token="token-from-previous-response")
 
 record = client.get_record(
-    identifier="oai:onlinekommentar.ch:commentary:40eb831a-088b-4b27-9fe2-31f049c790a5",
+    identifier="identifier-from-OAI-header",
     metadata_prefix="oai_dc",
 )
 ```
 
-For unsupported or advanced OAI-PMH combinations, use the generic helper:
+For explicit protocol calls or a per-call timeout, use the generic helper:
 
 ```python
 xml = client.oai(
@@ -107,14 +116,17 @@ xml = client.oai(
 )
 ```
 
-`list_records()` and `list_identifiers()` default to `oai_dc` for initial requests.
+`get_record()`, `list_records()` and `list_identifiers()` default to `oai_dc` for initial requests.
 Passing a resumption token together with an explicit metadata prefix or filters
 raises `ValueError`, following the
 [OAI-PMH exclusive-argument rules](https://www.openarchives.org/OAI/openarchivesprotocol.html#ProtocolMessages).
 
 ### Configuration
 
-Runtime defaults are loaded from `config.yaml` when present. Constructor arguments such as `base_url`, `timeout`, `rate_limit_delay`, and `default_language` override configured defaults.
+Settings are loaded from `config.yaml` in the working directory, or from an explicit
+`config_path`. No configuration file is shipped. Non-`None` constructor arguments
+for the four settings below override file values, after the file has been validated.
+The example shows the package defaults:
 
 ```yaml
 onlinekommentar:
@@ -125,8 +137,21 @@ onlinekommentar:
 ```
 
 ```python
-client = OnlinekommentarClient(timeout=10.0, rate_limit_delay=0.5, default_language="de")
+with OnlinekommentarClient(timeout=10.0, rate_limit_delay=0.5, default_language="de") as client:
+    results = client.list_commentaries()
 ```
+
+Settings may be at the YAML root or under `onlinekommentar`; when that section is
+present, other root sections are ignored. Missing files use defaults. Existing files
+must contain a mapping (`{}` is valid); empty files, unknown client settings, and
+invalid values are rejected. Base URLs may include a path prefix, but cannot contain
+credentials, queries, or fragments. `timeout` must be finite and positive;
+`rate_limit_delay` must be finite and nonnegative. Durations are in seconds.
+
+`request_timeout` overrides the HTTPX timeout on `list_commentaries()`,
+`list_commentaries_raw()` and `oai()` only. Detail methods and named OAI helpers use
+the constructor timeout. This is an HTTPX timeout for connect/read/write/pool
+operations, not a total deadline for a call or harvest.
 
 ### Typed Models
 
@@ -142,24 +167,22 @@ from onlinekommentar import (
 The client models stable high-use shapes and preserves unknown fields in each model's `raw` attribute. Raw JSON helpers are available for consumers that need exact API payloads.
 
 Models and configuration are validated Pydantic models. Construct them with keyword
-arguments; dataclass utilities and positional construction are no longer supported.
-`from_json()` remains available. Invalid payloads raise `pydantic.ValidationError`
+arguments; they are not dataclasses. API response models provide `from_json()` to
+validate dictionaries. Invalid payloads raise `pydantic.ValidationError`
 (a `ValueError` subclass), with structured field errors. Malformed collections and
 pagination values are rejected rather than silently discarded or coerced. Integer
-identifiers are still accepted and normalized to strings. Models prevent field
+identifiers are accepted and normalized to strings. Models prevent field
 reassignment, but their lists and raw dictionaries remain mutable.
 
-Missing configuration files use defaults. Existing files must contain a YAML mapping
-(`{}` is valid); empty files, unknown settings, and invalid values are rejected.
-Base URLs may include a path prefix, but cannot contain credentials, queries, or fragments.
-
-Use a separate client per thread: the rate limiter is intended for sequential requests.
+Use a separate client per thread: the synchronous rate limiter spaces request starts
+on one client and is intended for sequential requests. The client adds no automatic
+retries or pagination. Close it with a context manager or `close()`.
 HTTP failures and timeouts propagate as HTTPX exceptions. OAI-PMH responses remain raw
 XML, so callers must inspect any protocol-level `<error>` elements themselves.
 
 ## Scope
 
-This package covers the public routes documented on the Onlinekommentar API page:
+The client implements requests to these routes:
 
 - `GET /api/commentaries`
 - `GET /api/commentaries/{id}`
@@ -167,18 +190,9 @@ This package covers the public routes documented on the Onlinekommentar API page
 
 The client does not scrape website pages and does not cover private or undocumented routes.
 
-### API compatibility check (2026-09-27)
-
-The current [API documentation](https://onlinekommentar.ch/en/apis) still lists the
-same endpoints and parameters. Live checks parsed JSON lists in all four languages,
-a detail response, and the documented German search. OAI `Identify`, `ListSets`,
-`ListMetadataFormats`, and initial `ListRecords`/`GetRecord` requests in both metadata
-formats succeeded.
-
-Upstream issues observed: `ListIdentifiers` returned HTTP 500, and record continuation
-returned `badResumptionToken`. A diagnostic response contained an already-expired
-token despite a no-cache request. These responses are surfaced unchanged; callers
-must check XML protocol errors before treating a harvest as complete.
+Tests use synthetic HTTP responses; they do not establish current upstream API
+availability or compatibility. Historical upstream observations awaiting rechecking
+are tracked in [PLAN.md](PLAN.md).
 
 ## Fair Use
 
@@ -199,7 +213,14 @@ uv build
 
 The package lives in `src/onlinekommentar` and uses the `uv_build` backend. Tests
 import the installed package; run `uv sync` after cloning or changing build metadata.
-Python 3.13 and newer are supported. Dependency updates are monitored by Dependabot.
+`pyproject.toml` declares Python >=3.13; there is no CI version matrix. Weekly uv
+dependency updates are configured in `.github/dependabot.yml`, but successful
+repository-side runs are not established by these files. No CI workflow is present.
+
+`client.py` handles synchronous HTTP requests and rate limiting, `config.py` loads
+and validates settings, and `models.py` validates JSON responses. The package has
+no CLI or application server. Design constraints are recorded in [NOTES.md](NOTES.md);
+remaining infrastructure and upstream checks are in [PLAN.md](PLAN.md).
 
 ## License
 
