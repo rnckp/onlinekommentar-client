@@ -240,53 +240,49 @@ class OnlinekommentarClient:
 
     def list_identifiers(
         self,
-        metadata_prefix: str = "oai_dc",
+        metadata_prefix: str | None = None,
         from_date: str | None = None,
         until: str | None = None,
         set_spec: str | None = None,
         resumption_token: str | None = None,
     ) -> str:
-        """List OAI-PMH record identifiers."""
-        if resumption_token is not None:
-            _raise_for_combined_resumption_token(
-                _argument_names_with_values(
-                    from_date=from_date,
-                    until=until,
-                    set_spec=set_spec,
-                )
-            )
+        """List OAI-PMH record identifiers.
+
+        The initial request defaults to oai_dc. Continuation requests accept only
+        resumption_token; supplying a format or filters raises ValueError.
+        """
+        if metadata_prefix is None and resumption_token is None:
+            metadata_prefix = "oai_dc"
         return self.oai(
             "ListIdentifiers",
-            metadata_prefix=None if resumption_token is not None else metadata_prefix,
-            from_date=None if resumption_token is not None else from_date,
-            until=None if resumption_token is not None else until,
-            set_spec=None if resumption_token is not None else set_spec,
+            metadata_prefix=metadata_prefix,
+            from_date=from_date,
+            until=until,
+            set_spec=set_spec,
             resumption_token=resumption_token,
         )
 
     def list_records(
         self,
-        metadata_prefix: str = "oai_dc",
+        metadata_prefix: str | None = None,
         from_date: str | None = None,
         until: str | None = None,
         set_spec: str | None = None,
         resumption_token: str | None = None,
     ) -> str:
-        """Harvest OAI-PMH metadata records."""
-        if resumption_token is not None:
-            _raise_for_combined_resumption_token(
-                _argument_names_with_values(
-                    from_date=from_date,
-                    until=until,
-                    set_spec=set_spec,
-                )
-            )
+        """Harvest OAI-PMH metadata records.
+
+        The initial request defaults to oai_dc. Continuation requests accept only
+        resumption_token; supplying a format or filters raises ValueError.
+        """
+        if metadata_prefix is None and resumption_token is None:
+            metadata_prefix = "oai_dc"
         return self.oai(
             "ListRecords",
-            metadata_prefix=None if resumption_token is not None else metadata_prefix,
-            from_date=None if resumption_token is not None else from_date,
-            until=None if resumption_token is not None else until,
-            set_spec=None if resumption_token is not None else set_spec,
+            metadata_prefix=metadata_prefix,
+            from_date=from_date,
+            until=until,
+            set_spec=set_spec,
             resumption_token=resumption_token,
         )
 

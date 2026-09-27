@@ -5,10 +5,11 @@
   actions before pinning them to full commit SHAs; dependency/service approval is
   required for new tooling. Dependabot configuration is present, but repository-side
   enablement and successful update runs have not been verified.
-- The OAI pagination helpers currently discard an explicitly supplied metadata prefix
-  when a resumption token is present. Their default `oai_dc` cannot be distinguished
-  from an explicit argument. A future API adjustment can use a sentinel and reject
-  conflicting explicit prefixes consistently with the generic `oai()` method.
-- Live API/schema compatibility was not checked during this review; all HTTP tests
-  use MockTransport. Validate against the upstream service before a release,
-  especially the stricter response schemas.
+- Recheck upstream OAI failures before releasing harvesting functionality. On
+  2026-09-27, `ListIdentifiers&metadataPrefix=oai_dc` returned HTTP 500 with both
+  JSON and XML Accept headers. Initial ListRecords/GetRecord requests worked for
+  both formats, but continuation returned `badResumptionToken`; a no-cache request
+  still received a response dated 2026-09-17 with a token expiring that same day.
+  The cause of stale responses is unconfirmed. Do not hide these failures or
+  treat them as successful completion. Other sampled live routes parsed correctly;
+  this was a smoke check, not a complete crawl of every record/filter combination.

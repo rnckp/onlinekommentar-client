@@ -85,6 +85,9 @@ identifiers = client.list_identifiers(
 
 records = client.list_records(metadata_prefix="oai_openaire")
 
+# Continue with the token returned in the XML; do not repeat the format or filters.
+next_records = client.list_records(resumption_token="token-from-previous-response")
+
 record = client.get_record(
     identifier="oai:onlinekommentar.ch:commentary:40eb831a-088b-4b27-9fe2-31f049c790a5",
     metadata_prefix="oai_dc",
@@ -99,6 +102,11 @@ xml = client.oai(
     resumption_token="token-from-previous-response",
 )
 ```
+
+`list_records()` and `list_identifiers()` default to `oai_dc` for initial requests.
+Passing a resumption token together with an explicit metadata prefix or filters
+raises `ValueError`, following the
+[OAI-PMH exclusive-argument rules](https://www.openarchives.org/OAI/openarchivesprotocol.html#ProtocolMessages).
 
 ### Configuration
 
@@ -154,6 +162,19 @@ This package covers the public routes documented on the Onlinekommentar API page
 - `GET /oai` with OAI-PMH verbs `Identify`, `ListMetadataFormats`, `ListSets`, `ListIdentifiers`, `ListRecords`, and `GetRecord`
 
 The client does not scrape website pages and does not cover private or undocumented routes.
+
+### API compatibility check (2026-09-27)
+
+The current [API documentation](https://onlinekommentar.ch/en/apis) still lists the
+same endpoints and parameters. Live checks parsed JSON lists in all four languages,
+a detail response, and the documented German search. OAI `Identify`, `ListSets`,
+`ListMetadataFormats`, and initial `ListRecords`/`GetRecord` requests in both metadata
+formats succeeded.
+
+Upstream issues observed: `ListIdentifiers` returned HTTP 500, and record continuation
+returned `badResumptionToken`. A diagnostic response contained an already-expired
+token despite a no-cache request. These responses are surfaced unchanged; callers
+must check XML protocol errors before treating a harvest as complete.
 
 ## Fair Use
 

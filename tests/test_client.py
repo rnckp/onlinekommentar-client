@@ -351,3 +351,41 @@ def test_request_timeout_reaches_transport() -> None:
     with _client_with_handler(httpx.MockTransport(handler)) as client:
         with pytest.raises(httpx.ReadTimeout):
             client.list_commentaries_raw(request_timeout=2.5)
+
+
+@pytest.mark.parametrize("method_name", ["list_identifiers", "list_records"])
+@pytest.mark.parametrize("metadata_prefix", ["oai_dc", "oai_openaire"])
+def test_oai_helpers_reject_explicit_format_with_resumption_token(
+    method_name: str, metadata_prefix: str
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Conflicting OAI arguments must fail before a request is sent")
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        with pytest.raises(
+            ValueError, match="resumption_token cannot be combined with: metadata_prefix"
+        ):
+            getattr(client, method_name)(
+                metadata_prefix=metadata_prefix, resumption_token="next-page-token"
+            )
+
+
+@pytest.mark.parametrize("method_name", ["list_identifiers", "list_records"])
+def test_oai_helpers_default_to_dublin_core(method_name: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["metadataPrefix"] == "oai_dc"
+        return httpx.Response(200, text="<OAI-PMH />")
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        assert getattr(client, method_name)() == "<OAI-PMH />"
+
+
+def test_oai_protocol_errors_are_returned_as_xml() -> None:
+    xml = (
+        '<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">'
+        '<error code="badResumptionToken">Expired token</error></OAI-PMH>'
+    )
+    with _client_with_handler(
+        httpx.MockTransport(lambda request: httpx.Response(200, text=xml))
+    ) as client:
+        assert client.list_records(resumption_token="expired-token") == xml
