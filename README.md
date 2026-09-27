@@ -14,7 +14,11 @@ uv sync
 
 ## Quick Start
 
-For a tour of the public APIs, see also [examples/onlinekommentar_demo.ipynb](examples/onlinekommentar_demo.ipynb).
+For a complete runnable walkthrough, see [examples/onlinekommentar_demo.ipynb](examples/onlinekommentar_demo.ipynb).
+It covers configuration, every JSON filter and raw/typed response method, bounded pagination,
+all six OAI-PMH verbs, both metadata formats, continuation tokens, error handling, and an offline
+HTTPX transport. Run cells in order; API cells make live requests and discover IDs from responses.
+Automated tests execute the notebook with synthetic responses, including upstream failure cases.
 
 ```python
 from onlinekommentar import OnlinekommentarClient
