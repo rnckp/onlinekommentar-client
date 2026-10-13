@@ -72,7 +72,8 @@ commentary = client.get_commentary("commentary-id-from-response")
 `list_commentaries()` returns a `CommentarySearchResult` with parsed `Commentary`
 items. `get_commentary()` returns a single `Commentary`. Each list call fetches one page;
 pagination is caller-managed. Omitted `sort` and `page` values are not sent, leaving
-defaults to the server. List filters are forwarded without local value validation.
+defaults to the server. List methods do not validate filter values; an omitted or
+empty `language` uses the configured default.
 
 Raw JSON helpers are available when you need fields that are not modeled yet:
 
@@ -84,6 +85,7 @@ raw_commentary = client.get_commentary_raw("commentary-id-from-response")
 For bounded pagination, `iter_commentaries()` retains the filters and defaults to
 at most ten pages. Set an explicit cap for larger traversals. It increments page
 numbers on the configured server rather than following URLs supplied in responses.
+Iteration stops when `next_page_url` is absent or empty.
 If more pages remain at the cap, it raises `PaginationLimitError`; any items already
 yielded are incomplete results. HTTP and validation failures also stop iteration.
 
@@ -99,7 +101,7 @@ except PaginationLimitError:
 
 ### OAI-PMH
 
-The public OAI-PMH endpoint returns XML. The client provides small helpers and returns the XML text unchanged.
+The OAI-PMH helpers return response text without parsing it automatically.
 Requests use an XML Accept header.
 
 ```python
@@ -124,7 +126,8 @@ record = client.get_record(
 )
 ```
 
-For explicit protocol calls or a per-call timeout, use the generic helper:
+For explicit protocol calls, use the generic helper. It accepts `request_timeout`,
+as do the named helpers:
 
 ```python
 xml = client.oai(
@@ -140,7 +143,8 @@ raises `ValueError`, following the
 
 Use the optional parser to validate XML and detect protocol errors even when the
 HTTP status is 200. Error messages contain standard codes rather than server text.
-The parser rejects DTD/entity declarations and unexpected XML roots.
+The parser rejects malformed XML, DTD/entity declarations and unexpected XML roots;
+it does not validate the complete OAI-PMH schema or metadata contents.
 
 ```python
 from onlinekommentar import OAIProtocolError, parse_oai_response
@@ -151,18 +155,18 @@ except OAIProtocolError as error:
     print(error.codes)
 ```
 
-On 13 October 2026, live checks found that `ListIdentifiers` returned HTTP 500.
-`ListRecords`, one continuation page, and `GetRecord` worked with both advertised
-formats. If identifier listing fails, callers can explicitly read identifiers from
-`ListRecords` headers. The client propagates the failure without silently changing
-the requested verb. These observations do not establish complete harvesting.
+If identifier listing fails, callers can explicitly read identifiers from
+`ListRecords` headers. The client propagates failures without silently changing
+the requested verb. Historical upstream observations and their verification limits
+are recorded in [NOTES.md](NOTES.md).
 
 ### Configuration
 
 Settings are loaded from `config.yaml` in the working directory, or from an explicit
 `config_path`. The repository includes [config.yaml](config.yaml) with package
 defaults; installed distributions use defaults unless the consuming application
-provides a file. Non-`None` constructor settings override validated file values:
+provides a file. The file is validated before non-`None` constructor settings
+override its values; overrides cannot repair an invalid file:
 
 ```yaml
 onlinekommentar:
@@ -222,7 +226,9 @@ from onlinekommentar import (
 )
 ```
 
-The client models stable high-use shapes and preserves unknown fields in each model's `raw` attribute. Raw JSON helpers are available for consumers that need exact API payloads.
+The response models expose selected fields and preserve unknown fields in each
+model's `raw` attribute. Raw JSON helpers return the decoded JSON object without
+model validation.
 
 Models and configuration are validated Pydantic models. Construct them with keyword
 arguments; they are not dataclasses. API response models provide `from_json()` to
@@ -234,8 +240,8 @@ blank identifiers are rejected. Required titles and names cannot be blank. Model
 prevent field reassignment, but their lists and raw dictionaries remain mutable.
 
 Use a separate client per thread: the synchronous rate limiter spaces request starts
-on one client and is intended for sequential requests. The client adds no automatic
-retries unless explicitly enabled. Close it with a context manager or `close()`.
+on one client and is intended for sequential requests. Close it with a context
+manager or `close()`.
 HTTP failures and timeouts propagate as HTTPX exceptions. OAI-PMH responses remain raw
 XML; use `parse_oai_response()` or inspect protocol-level `<error>` elements yourself.
 
@@ -272,11 +278,12 @@ uv run pre-commit run --all-files
 uv build --force-pep517
 ```
 
-The local hooks clear notebook outputs/execution counts and run the declared Ruff
-tools. To clear a notebook manually, run
+The local hooks run Ruff formatting and lint checks, including notebooks. They do
+not clear notebook outputs/execution counts; tests require those to be empty.
+Before committing an executed notebook, run
 `uv run python scripts/clear_notebook_outputs.py examples/onlinekommentar_demo.ipynb`.
-The cleanup command returns 1 when it changes files, as expected by pre-commit;
-review and stage the cleared notebook before committing.
+The cleanup command returns 1 when it changes files and 0 when no changes are
+needed; review and stage the cleared notebook before committing.
 The build command uses the declared backend through PEP 517 even when the installed
 uv CLI is newer than the backend's supported range.
 
@@ -284,11 +291,11 @@ The package lives in `src/onlinekommentar` and uses the `uv_build` backend. Test
 import the installed package; run `uv sync` after cloning or changing build metadata.
 CI checks Python 3.13 and 3.14, formatting, lint, tests, hooks, distribution builds,
 and the locked dependencies for known vulnerabilities. It also runs weekly.
-Actions are pinned to verified commit SHAs; Dependabot monitors uv dependencies
-and GitHub Actions weekly. Repository settings and successful hosted runs must
+Actions are pinned to full commit SHAs; Dependabot is configured to monitor uv
+dependencies and GitHub Actions weekly. Repository settings and successful hosted runs must
 still be verified after pushing the branch.
 
-To run the same vulnerability check locally (queries PyPI for package versions):
+To run the same vulnerability check locally (contacts external package/advisory services):
 
 ```bash
 uv export --locked --all-groups --no-emit-project --output-file /tmp/onlinekommentar-requirements.txt

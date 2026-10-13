@@ -6,10 +6,26 @@
 - `quote(..., safe="")` does not escape dot segments. Empty, `.` and `..` commentary IDs must be rejected before HTTPX normalizes the request path. Base URLs must also reject query/fragment components to keep endpoint concatenation valid.
 - This repository is a synchronous client library. Application-level Docker, logging configuration, health endpoints, and telemetry are intentionally left to consuming applications.
 - OAI list helpers use `metadata_prefix=None` to distinguish omission from an explicit format. This lets initial requests default to `oai_dc` while continuation requests reject explicit formats. Preserve this distinction when changing the signatures; see the token rules in [README.md](README.md).
-- On 2026-10-13, the [official API documentation](https://onlinekommentar.ch/en/apis) still listed the two implemented JSON routes, all five implemented list filters, and all six implemented OAI-PMH verbs. Bounded read-only checks validated JSON list pages 1 and 2, a combined language/search/act/sort filter, and a wrapped detail response against the client models. Identify, ListMetadataFormats, and ListSets succeeded; both advertised formats (`oai_dc`, `oai_openaire`) succeeded for initial ListRecords, one continuation page, and GetRecord. This does not establish complete harvesting or every filter combination.
-- In that live check, ListIdentifiers with `metadataPrefix=oai_dc` returned HTTP 500 with both JSON and XML Accept headers. Fresh ListRecords continuation succeeded in both formats, so the historical `badResumptionToken` concern was not reproduced. A date/set-filtered ListRecords request returned the valid `noRecordsMatch` protocol error. Response payloads and opaque identifiers/tokens were not retained.
-- The 2026-10-13 review found that saved notebook outputs/execution counts caused all five notebook tests to fail before executing tutorial cells. Clearing them only in memory let the unchanged tutorial pass all five synthetic scenarios; preserve the output-clearing assertions when fixing the artifact.
+- The notebook tests require empty saved outputs and unset execution counts before running tutorial cells. The Ruff-only hooks do not clear them; use the cleanup command in [README.md](README.md) before committing an executed notebook. Preserve these assertions to keep live response data out of Git.
 - `discover_config=False` disables only implicit working-directory discovery. Explicit config paths still load and validate before constructor overrides. Client tests run from temporary working directories so repository/user config cannot affect their defaults.
-- Retries are opt-in and apply only to transient transport failures and HTTP 429/502/503/504. A Retry-After value above the delay budget propagates the HTTP error rather than retrying before the server allows it. HTTP 500 and OAI protocol errors are not automatically retried; the known ListIdentifiers failure remains visible.
-- Bounded commentary iteration increments page numbers on the configured server and never follows response-supplied URLs. The cap raises PaginationLimitError when more pages remain; already yielded results must be treated as partial.
-- CI pins uv 0.13.0 to support the current lock format and builds with `--force-pep517` to honor the existing uv_build backend range instead of using a newer CLI's bundled fast path. The approved pre-commit and pip-audit tools are development dependencies; runtime dependencies are unchanged.
+- CI pins uv 0.13.0 and builds with `--force-pep517` to use the declared uv_build backend range. Keep this flag when upgrading the CLI, whose bundled build backend may fall outside that range.
+
+## Historical upstream observations
+
+The previous review recorded the following observations on 2026-10-13. Responses
+were not retained, so the repository cannot independently substantiate these
+results or establish current service availability. Tests use synthetic responses.
+
+- The [official API documentation](https://onlinekommentar.ch/en/apis) was reported
+  to list the two implemented JSON routes, five list filters and six OAI-PMH verbs.
+  Bounded checks reportedly validated JSON pages 1 and 2, combined filters and a
+  wrapped detail response against the client models.
+- Identify, ListMetadataFormats and ListSets reportedly succeeded. The advertised
+  `oai_dc` and `oai_openaire` formats worked for initial ListRecords, one continuation
+  page and GetRecord. A date/set-filtered ListRecords request returned `noRecordsMatch`.
+- ListIdentifiers with `metadataPrefix=oai_dc` reportedly returned HTTP 500 with
+  both JSON and XML Accept headers. The earlier `badResumptionToken` concern was
+  not reproduced with fresh ListRecords tokens.
+
+Complete harvesting and every filter combination remain unverified. Follow-up
+checks are tracked in [PLAN.md](PLAN.md).
