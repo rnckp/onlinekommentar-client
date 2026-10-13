@@ -1,0 +1,9 @@
+# Public API defaults. Durations are seconds; retries are opt-in.
+onlinekommentar:
+  base_url: "https://onlinekommentar.ch"
+  timeout: 30.0
+  rate_limit_delay: 0.2
+  default_language: "en"
+  max_retries: 0
+  retry_backoff: 1.0
+  max_retry_delay: 60.0

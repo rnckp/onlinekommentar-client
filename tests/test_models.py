@@ -175,3 +175,31 @@ def test_model_errors_do_not_display_input_values() -> None:
     with pytest.raises(ValidationError) as error:
         Person.from_json({"name": {"private": "example-sensitive-value"}})
     assert "example-sensitive-value" not in str(error.value)
+
+
+@pytest.mark.parametrize("identifier", [1.0, 1.5, float("inf"), float("nan"), True, b"id", "  "])
+def test_identifier_rejects_values_outside_string_integer_contract(identifier: object) -> None:
+    with pytest.raises(ValidationError):
+        Commentary.from_json({"id": identifier, "title": "Example"})
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (Person, {"name": " \t"}),
+        (LegislativeAct, {"title": " \n"}),
+        (Commentary, {"id": "example", "title": " "}),
+    ],
+)
+def test_required_strings_reject_whitespace_only_values(
+    model: type[Person] | type[LegislativeAct] | type[Commentary], payload: dict[str, str]
+) -> None:
+    with pytest.raises(ValidationError):
+        model.from_json(payload)
+
+
+def test_canonical_commentary_id_does_not_confuse_unknown_data_field_with_envelope() -> None:
+    payload = {"commentary_id": "example", "title": "Example", "data": {"extra": 1}}
+    commentary = Commentary.from_json(payload)
+    assert commentary.commentary_id == "example"
+    assert commentary.raw == payload

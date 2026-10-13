@@ -1,3 +1,6 @@
+from datetime import UTC, datetime, tzinfo
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -12,11 +15,18 @@ def _client_with_handler(
         base_url="https://example.test",
         rate_limit_delay=0,
         transport=handler,
+        discover_config=False,
     )
 
 
 def _json_response(data: object) -> httpx.Response:
     return httpx.Response(200, json=data)
+
+
+@pytest.fixture(autouse=True)
+def isolated_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep client tests independent of the developer's working-directory config."""
+    monkeypatch.chdir(tmp_path)
 
 
 def test_list_commentaries_builds_query_and_parses_result() -> None:
@@ -389,3 +399,259 @@ def test_oai_protocol_errors_are_returned_as_xml() -> None:
         httpx.MockTransport(lambda request: httpx.Response(200, text=xml))
     ) as client:
         assert client.list_records(resumption_token="expired-token") == xml
+
+
+@pytest.mark.parametrize("timeout", [0, -1, True, float("nan"), float("inf")])
+def test_invalid_request_timeouts_fail_before_network(timeout: float) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid timeouts must fail before a request")
+
+    with OnlinekommentarClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError):
+            client.list_commentaries_raw(request_timeout=timeout)
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs"),
+    [
+        ("get_commentary", {"commentary_id": "example"}),
+        ("get_commentary_raw", {"commentary_id": "example"}),
+        ("identify", {}),
+        ("list_metadata_formats", {}),
+        ("list_sets", {}),
+        ("list_identifiers", {}),
+        ("list_records", {}),
+        ("get_record", {"identifier": "oai:example:record"}),
+    ],
+)
+def test_named_helpers_forward_request_timeout(method: str, kwargs: dict[str, str]) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert set(request.extensions["timeout"].values()) == {2.5}
+        if request.url.path.startswith("/api/"):
+            return _json_response({"id": "example", "title": "Example"})
+        return httpx.Response(200, text="<OAI-PMH />")
+
+    with OnlinekommentarClient(transport=httpx.MockTransport(handler)) as client:
+        getattr(client, method)(**kwargs, request_timeout=2.5)
+
+
+def test_client_can_ignore_unrelated_working_directory_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "config.yaml").write_text("another_app: true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    with OnlinekommentarClient(discover_config=False) as client:
+        assert client.base_url == "https://onlinekommentar.ch"
+
+
+def test_retries_are_disabled_by_default() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    with OnlinekommentarClient(discover_config=False, transport=httpx.MockTransport(handler)) as c:
+        with pytest.raises(httpx.HTTPStatusError):
+            c.list_commentaries_raw()
+    assert calls == 1
+
+
+def test_retry_after_is_respected_and_response_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("onlinekommentar.client.time.sleep", sleeps.append)
+    responses = [httpx.Response(429, headers={"Retry-After": "3"}), _json_response({"data": []})]
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        response = responses[calls]
+        calls += 1
+        return response
+
+    with OnlinekommentarClient(
+        discover_config=False,
+        max_retries=1,
+        rate_limit_delay=0,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        assert client.list_commentaries_raw() == {"data": []}
+    assert calls == 2
+    assert sleeps == [3.0]
+    assert responses[0].is_closed
+
+
+@pytest.mark.parametrize("retry_after", ["120", "9" * 400])
+def test_retry_after_exceeding_budget_does_not_retry_early(
+    monkeypatch: pytest.MonkeyPatch, retry_after: str
+) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("onlinekommentar.client.time.sleep", sleeps.append)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": retry_after})
+
+    with OnlinekommentarClient(
+        discover_config=False,
+        max_retries=2,
+        rate_limit_delay=0,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            client.list_commentaries_raw()
+    assert calls == 1
+    assert sleeps == []
+
+
+def test_transport_retries_stop_at_configured_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("onlinekommentar.client.time.sleep", sleeps.append)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        raise httpx.ConnectError("Synthetic failure", request=request)
+
+    with OnlinekommentarClient(
+        discover_config=False,
+        max_retries=2,
+        rate_limit_delay=0,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(httpx.ConnectError):
+            client.list_commentaries_raw()
+    assert calls == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_retry_after_http_date_uses_remaining_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return datetime(2026, 10, 13, tzinfo=UTC)
+
+    monkeypatch.setattr("onlinekommentar.client.datetime", FixedDatetime)
+    sleeps: list[float] = []
+    monkeypatch.setattr("onlinekommentar.client.time.sleep", sleeps.append)
+    responses = iter(
+        [
+            httpx.Response(503, headers={"Retry-After": "Tue, 13 Oct 2026 00:00:05 GMT"}),
+            _json_response({"data": []}),
+        ]
+    )
+    with OnlinekommentarClient(
+        discover_config=False,
+        max_retries=1,
+        rate_limit_delay=0,
+        transport=httpx.MockTransport(lambda request: next(responses)),
+    ) as client:
+        assert client.list_commentaries_raw() == {"data": []}
+    assert sleeps == [5.0]
+
+
+@pytest.mark.parametrize("status", [404, 500])
+def test_non_transient_http_errors_are_not_retried(status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status)
+
+    with OnlinekommentarClient(
+        discover_config=False,
+        max_retries=2,
+        rate_limit_delay=0,
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            client.list_commentaries_raw()
+    assert calls == 1
+
+
+def test_oai_uses_xml_accept_header() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Accept"] == "application/xml"
+        return httpx.Response(200, text="<OAI-PMH />")
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        assert client.identify() == "<OAI-PMH />"
+
+
+def test_iterator_preserves_filters_and_never_follows_response_urls() -> None:
+    pages: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "example.test"
+        assert request.url.params["search"] == "Example"
+        assert request.url.params["language"] == "de"
+        assert request.url.params["legislative_act"] == "act-1"
+        assert request.url.params["sort"] == "title"
+        page = request.url.params["page"]
+        pages.append(page)
+        return _json_response(
+            {
+                "data": [{"id": page, "title": "Example"}],
+                "meta": {"current_page": int(page)},
+                "links": {"next": "https://untrusted.test/" if page == "1" else None},
+            }
+        )
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        items = list(
+            client.iter_commentaries(
+                language="de",
+                search="Example",
+                legislative_act="act-1",
+                sort="title",
+                max_pages=2,
+            )
+        )
+    assert [item.commentary_id for item in items] == ["1", "2"]
+    assert pages == ["1", "2"]
+
+
+def test_iterator_reports_incomplete_results_at_page_cap() -> None:
+    from onlinekommentar import PaginationLimitError
+
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _json_response({"data": [], "links": {"next": "https://example.test/?page=2"}})
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        with pytest.raises(PaginationLimitError):
+            list(client.iter_commentaries(max_pages=2))
+    assert calls == 2
+
+
+@pytest.mark.parametrize("kwargs", [{"max_pages": 0}, {"max_pages": True}, {"start_page": -1}])
+def test_iterator_rejects_invalid_bounds_before_network(kwargs: dict[str, object]) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid bounds must fail before a request")
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        with pytest.raises(ValueError):
+            list(client.iter_commentaries(**kwargs))
+
+
+def test_iterator_rejects_repeated_server_page_before_yielding_items() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _json_response(
+            {
+                "data": [{"id": "duplicate", "title": "Example"}],
+                "meta": {"current_page": 1},
+            }
+        )
+
+    with _client_with_handler(httpx.MockTransport(handler)) as client:
+        iterator = client.iter_commentaries(start_page=2)
+        with pytest.raises(ValueError, match="unexpected page"):
+            next(iterator)

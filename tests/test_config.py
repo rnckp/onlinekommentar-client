@@ -130,3 +130,37 @@ def test_direct_config_construction_validates_settings(settings: dict[str, objec
 
 def test_missing_config_uses_defaults(tmp_path: Path) -> None:
     assert load_config(tmp_path / "missing.yaml") == DEFAULT_CONFIG
+
+
+def test_config_discovery_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "config.yaml").write_text("another_app: true\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert load_config(discover_config=False) == DEFAULT_CONFIG
+
+
+def test_explicit_config_is_used_when_discovery_disabled(tmp_path: Path) -> None:
+    path = tmp_path / "settings.yaml"
+    path.write_text("timeout: 5\n", encoding="utf-8")
+    assert load_config(path, discover_config=False).timeout == 5
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"max_retries": True},
+        {"max_retries": -1},
+        {"max_retries": 11},
+        {"retry_backoff": 0},
+        {"retry_backoff": True},
+        {"max_retry_delay": float("inf")},
+        {"max_retry_delay": -1},
+    ],
+)
+def test_invalid_retry_settings_are_rejected(settings: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        OnlinekommentarConfig(**settings)
+
+
+def test_repository_config_matches_package_defaults() -> None:
+    path = Path(__file__).resolve().parents[1] / "config.yaml"
+    assert load_config(path) == DEFAULT_CONFIG

@@ -81,9 +81,26 @@ raw_page = client.list_commentaries_raw(language="de", search="Datenschutz")
 raw_commentary = client.get_commentary_raw("commentary-id-from-response")
 ```
 
+For bounded pagination, `iter_commentaries()` retains the filters and defaults to
+at most ten pages. Set an explicit cap for larger traversals. It increments page
+numbers on the configured server rather than following URLs supplied in responses.
+If more pages remain at the cap, it raises `PaginationLimitError`; any items already
+yielded are incomplete results. HTTP and validation failures also stop iteration.
+
+```python
+from onlinekommentar import PaginationLimitError
+
+try:
+    for commentary in client.iter_commentaries(language="de", max_pages=20):
+        print(commentary.title)
+except PaginationLimitError:
+    print("Page limit reached; results are incomplete.")
+```
+
 ### OAI-PMH
 
 The public OAI-PMH endpoint returns XML. The client provides small helpers and returns the XML text unchanged.
+Requests use an XML Accept header.
 
 ```python
 identify = client.identify()
@@ -121,12 +138,31 @@ Passing a resumption token together with an explicit metadata prefix or filters
 raises `ValueError`, following the
 [OAI-PMH exclusive-argument rules](https://www.openarchives.org/OAI/openarchivesprotocol.html#ProtocolMessages).
 
+Use the optional parser to validate XML and detect protocol errors even when the
+HTTP status is 200. Error messages contain standard codes rather than server text.
+The parser rejects DTD/entity declarations and unexpected XML roots.
+
+```python
+from onlinekommentar import OAIProtocolError, parse_oai_response
+
+try:
+    root = parse_oai_response(client.list_records(request_timeout=60.0))
+except OAIProtocolError as error:
+    print(error.codes)
+```
+
+On 13 October 2026, live checks found that `ListIdentifiers` returned HTTP 500.
+`ListRecords`, one continuation page, and `GetRecord` worked with both advertised
+formats. If identifier listing fails, callers can explicitly read identifiers from
+`ListRecords` headers. The client propagates the failure without silently changing
+the requested verb. These observations do not establish complete harvesting.
+
 ### Configuration
 
 Settings are loaded from `config.yaml` in the working directory, or from an explicit
-`config_path`. No configuration file is shipped. Non-`None` constructor arguments
-for the four settings below override file values, after the file has been validated.
-The example shows the package defaults:
+`config_path`. The repository includes [config.yaml](config.yaml) with package
+defaults; installed distributions use defaults unless the consuming application
+provides a file. Non-`None` constructor settings override validated file values:
 
 ```yaml
 onlinekommentar:
@@ -134,12 +170,22 @@ onlinekommentar:
   timeout: 30.0
   rate_limit_delay: 0.2
   default_language: "en"
+  max_retries: 0
+  retry_backoff: 1.0
+  max_retry_delay: 60.0
 ```
 
 ```python
 with OnlinekommentarClient(timeout=10.0, rate_limit_delay=0.5, default_language="de") as client:
     results = client.list_commentaries()
+
+# Ignore a consuming application's unrelated working-directory config.yaml.
+with OnlinekommentarClient(discover_config=False) as client:
+    results = client.list_commentaries()
 ```
+
+`discover_config=False` disables implicit lookup only; an explicit `config_path`
+still loads that file.
 
 Settings may be at the YAML root or under `onlinekommentar`; when that section is
 present, other root sections are ignored. Missing files use defaults. Existing files
@@ -148,10 +194,22 @@ invalid values are rejected. Base URLs may include a path prefix, but cannot con
 credentials, queries, or fragments. `timeout` must be finite and positive;
 `rate_limit_delay` must be finite and nonnegative. Durations are in seconds.
 
-`request_timeout` overrides the HTTPX timeout on `list_commentaries()`,
-`list_commentaries_raw()` and `oai()` only. Detail methods and named OAI helpers use
-the constructor timeout. This is an HTTPX timeout for connect/read/write/pool
-operations, not a total deadline for a call or harvest.
+Every request method accepts a keyword-only `request_timeout`, validated with the
+same finite, positive, non-boolean constraints as the constructor timeout. This is
+an HTTPX timeout for connect/read/write/pool operations, not a total deadline for a
+call or harvest. The iterator applies it separately to each page request.
+
+Retries are disabled by default. Opt in with `max_retries` (0–10). Transient
+transport errors and HTTP 429/502/503/504 use exponential backoff, starting at
+`retry_backoff` and capped at `max_retry_delay`. HTTP 500 and XML protocol errors
+are not retried. A valid `Retry-After` seconds value or HTTP date takes precedence
+when longer; if it exceeds the configured delay budget, the HTTP error propagates
+instead of retrying early. Rate limiting also applies to retry attempts.
+
+```python
+with OnlinekommentarClient(max_retries=2, retry_backoff=1.0, max_retry_delay=30.0) as client:
+    results = client.list_commentaries()
+```
 
 ### Typed Models
 
@@ -171,14 +229,15 @@ arguments; they are not dataclasses. API response models provide `from_json()` t
 validate dictionaries. Invalid payloads raise `pydantic.ValidationError`
 (a `ValueError` subclass), with structured field errors. Malformed collections and
 pagination values are rejected rather than silently discarded or coerced. Integer
-identifiers are accepted and normalized to strings. Models prevent field
-reassignment, but their lists and raw dictionaries remain mutable.
+identifiers are accepted and normalized to strings; floats, booleans, bytes, and
+blank identifiers are rejected. Required titles and names cannot be blank. Models
+prevent field reassignment, but their lists and raw dictionaries remain mutable.
 
 Use a separate client per thread: the synchronous rate limiter spaces request starts
 on one client and is intended for sequential requests. The client adds no automatic
-retries or pagination. Close it with a context manager or `close()`.
+retries unless explicitly enabled. Close it with a context manager or `close()`.
 HTTP failures and timeouts propagate as HTTPX exceptions. OAI-PMH responses remain raw
-XML, so callers must inspect any protocol-level `<error>` elements themselves.
+XML; use `parse_oai_response()` or inspect protocol-level `<error>` elements yourself.
 
 ## Scope
 
@@ -191,8 +250,8 @@ The client implements requests to these routes:
 The client does not scrape website pages and does not cover private or undocumented routes.
 
 Tests use synthetic HTTP responses; they do not establish current upstream API
-availability or compatibility. Historical upstream observations awaiting rechecking
-are tracked in [PLAN.md](PLAN.md).
+availability or compatibility. Dated live checks and remaining upstream issues
+are tracked in [NOTES.md](NOTES.md) and [PLAN.md](PLAN.md).
 
 ## Fair Use
 
@@ -205,20 +264,41 @@ This independent client accesses public Onlinekommentar endpoints.
 
 ```bash
 uv sync
+uv run pre-commit install
 uv run ruff format .
 uv run ruff check .
 uv run pytest -v
-uv build
+uv run pre-commit run --all-files
+uv build --force-pep517
 ```
+
+The local hooks clear notebook outputs/execution counts and run the declared Ruff
+tools. To clear a notebook manually, run
+`uv run python scripts/clear_notebook_outputs.py examples/onlinekommentar_demo.ipynb`.
+The cleanup command returns 1 when it changes files, as expected by pre-commit;
+review and stage the cleared notebook before committing.
+The build command uses the declared backend through PEP 517 even when the installed
+uv CLI is newer than the backend's supported range.
 
 The package lives in `src/onlinekommentar` and uses the `uv_build` backend. Tests
 import the installed package; run `uv sync` after cloning or changing build metadata.
-`pyproject.toml` declares Python >=3.13; there is no CI version matrix. Weekly uv
-dependency updates are configured in `.github/dependabot.yml`, but successful
-repository-side runs are not established by these files. No CI workflow is present.
+CI checks Python 3.13 and 3.14, formatting, lint, tests, hooks, distribution builds,
+and the locked dependencies for known vulnerabilities. It also runs weekly.
+Actions are pinned to verified commit SHAs; Dependabot monitors uv dependencies
+and GitHub Actions weekly. Repository settings and successful hosted runs must
+still be verified after pushing the branch.
+
+To run the same vulnerability check locally (queries PyPI for package versions):
+
+```bash
+uv export --locked --all-groups --no-emit-project --output-file /tmp/onlinekommentar-requirements.txt
+uv run pip-audit -r /tmp/onlinekommentar-requirements.txt --no-deps --disable-pip --strict
+rm /tmp/onlinekommentar-requirements.txt
+```
 
 `client.py` handles synchronous HTTP requests and rate limiting, `config.py` loads
-and validates settings, and `models.py` validates JSON responses. The package has
+and validates settings, `models.py` validates JSON responses, and `oai.py` provides
+optional XML validation. The package has
 no CLI or application server. Design constraints are recorded in [NOTES.md](NOTES.md);
 remaining infrastructure and upstream checks are in [PLAN.md](PLAN.md).
 

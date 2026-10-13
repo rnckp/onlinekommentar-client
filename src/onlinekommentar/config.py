@@ -2,13 +2,45 @@
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationInfo,
+    field_validator,
+)
 
 SUPPORTED_LANGUAGES = frozenset({"en", "de", "fr", "it"})
+
+
+def _reject_boolean(value: Any) -> Any:
+    if isinstance(value, bool):
+        raise ValueError("Numeric settings must not be booleans")
+    return value
+
+
+def _validate_timeout(value: float) -> float:
+    if not math.isfinite(value):
+        raise ValueError("timeout must be finite")
+    if value <= 0:
+        raise ValueError("timeout must be greater than 0")
+    return value
+
+
+Timeout = Annotated[float, BeforeValidator(_reject_boolean), AfterValidator(_validate_timeout)]
+_TIMEOUT_ADAPTER = TypeAdapter(Timeout)
+
+
+def validate_timeout(value: float) -> float:
+    """Validate a finite, positive, non-boolean HTTPX timeout."""
+    return _TIMEOUT_ADAPTER.validate_python(value)
 
 
 class OnlinekommentarConfig(BaseModel):
@@ -17,9 +49,12 @@ class OnlinekommentarConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", hide_input_in_errors=True)
 
     base_url: str = "https://onlinekommentar.ch"
-    timeout: float = 30.0
+    timeout: Timeout = 30.0
     rate_limit_delay: float = 0.2
     default_language: str = "en"
+    max_retries: int = Field(default=0, ge=0, le=10, strict=True)
+    retry_backoff: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    max_retry_delay: float = Field(default=60.0, gt=0, allow_inf_nan=False)
 
     @field_validator("base_url")
     @classmethod
@@ -44,20 +79,16 @@ class OnlinekommentarConfig(BaseModel):
             raise ValueError("base_url must not include whitespace or control characters")
         return value.rstrip("/")
 
-    @field_validator("timeout", "rate_limit_delay", mode="before")
+    @field_validator("rate_limit_delay", "retry_backoff", "max_retry_delay", mode="before")
     @classmethod
     def _reject_boolean_numbers(cls, value: Any) -> Any:
-        if isinstance(value, bool):
-            raise ValueError("Numeric settings must not be booleans")
-        return value
+        return _reject_boolean(value)
 
-    @field_validator("timeout", "rate_limit_delay")
+    @field_validator("rate_limit_delay")
     @classmethod
     def _validate_duration(cls, value: float, info: ValidationInfo) -> float:
         if not math.isfinite(value):
             raise ValueError(f"{info.field_name} must be finite")
-        if info.field_name == "timeout" and value <= 0:
-            raise ValueError("timeout must be greater than 0")
         if info.field_name == "rate_limit_delay" and value < 0:
             raise ValueError("rate_limit_delay must be greater than or equal to 0")
         return value
@@ -75,11 +106,14 @@ class OnlinekommentarConfig(BaseModel):
 DEFAULT_CONFIG = OnlinekommentarConfig()
 
 
-def load_config(config_path: Path | str | None = None) -> OnlinekommentarConfig:
+def load_config(
+    config_path: Path | str | None = None, *, discover_config: bool = True
+) -> OnlinekommentarConfig:
     """Load validated settings from an optional config.yaml file.
 
     Args:
         config_path: Settings file; defaults to config.yaml in the working directory.
+        discover_config: Read the working-directory file when no explicit path is supplied.
 
     Returns:
         Validated settings. Missing files use package defaults. A top-level
@@ -90,6 +124,8 @@ def load_config(config_path: Path | str | None = None) -> OnlinekommentarConfig:
         yaml.YAMLError: The document contains invalid YAML.
         OSError: An existing file cannot be read.
     """
+    if config_path is None and not discover_config:
+        return DEFAULT_CONFIG
     path = Path(config_path) if config_path is not None else Path("config.yaml")
     try:
         with path.open(encoding="utf-8") as config_file:

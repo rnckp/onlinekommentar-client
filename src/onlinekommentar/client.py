@@ -1,14 +1,43 @@
 """Synchronous client for the public Onlinekommentar APIs."""
 
 import time
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Self
 from urllib.parse import quote
 
 import httpx
 
-from .config import OnlinekommentarConfig, load_config
+from .config import OnlinekommentarConfig, load_config, validate_timeout
 from .models import Commentary, CommentarySearchResult
+
+_RETRY_STATUSES = frozenset({429, 502, 503, 504})
+_RETRY_EXCEPTIONS = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+
+
+class PaginationLimitError(RuntimeError):
+    """A bounded traversal stopped while more pages were available."""
+
+
+def _retry_after(value: str | None) -> float | None:
+    if value is None:
+        return None
+    if value.strip().isascii() and value.strip().isdigit():
+        try:
+            seconds = float(value)
+        except ValueError:
+            return None
+        # An enormous valid delay must stop retries, not fall back to a shorter wait.
+        return seconds
+    try:
+        deadline = parsedate_to_datetime(value)
+        if deadline.tzinfo is None:
+            return None
+        return max(0.0, (deadline - datetime.now(UTC)).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def _quote_segment(value: str | int) -> str:
@@ -40,14 +69,22 @@ class OnlinekommentarClient:
         default_language: str | None = None,
         config_path: Path | str | None = None,
         transport: httpx.BaseTransport | None = None,
+        *,
+        discover_config: bool = True,
+        max_retries: int | None = None,
+        retry_backoff: float | None = None,
+        max_retry_delay: float | None = None,
     ) -> None:
         """Initialize the client."""
-        config = load_config(config_path)
+        config = load_config(config_path, discover_config=discover_config)
         overrides = _params(
             base_url=base_url,
             timeout=timeout,
             rate_limit_delay=rate_limit_delay,
             default_language=default_language,
+            max_retries=max_retries,
+            retry_backoff=retry_backoff,
+            max_retry_delay=max_retry_delay,
         )
         effective_config = OnlinekommentarConfig.model_validate(config.model_dump() | overrides)
         self.config = effective_config
@@ -92,13 +129,35 @@ class OnlinekommentarClient:
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
-        self._rate_limit()
         request_kwargs: dict[str, Any] = {"params": params}
         if timeout is not None:
-            request_kwargs["timeout"] = timeout
-        response = self._client.request(method, self._url(path), **request_kwargs)
-        response.raise_for_status()
-        return response
+            request_kwargs["timeout"] = validate_timeout(timeout)
+        request_kwargs["headers"] = {
+            "Accept": "application/xml" if path == "/oai" else "application/json"
+        }
+        for attempt in range(self.config.max_retries + 1):
+            self._rate_limit()
+            delay = min(self.config.retry_backoff * 2**attempt, self.config.max_retry_delay)
+            try:
+                response = self._client.request(method, self._url(path), **request_kwargs)
+            except _RETRY_EXCEPTIONS:
+                if attempt == self.config.max_retries:
+                    raise
+            else:
+                if (
+                    response.status_code not in _RETRY_STATUSES
+                    or attempt == self.config.max_retries
+                ):
+                    response.raise_for_status()
+                    return response
+                retry_after = _retry_after(response.headers.get("Retry-After"))
+                if retry_after is not None:
+                    delay = max(delay, retry_after)
+                if delay > self.config.max_retry_delay:
+                    response.raise_for_status()
+                response.close()
+            time.sleep(delay)
+        raise AssertionError("Retry loop exhausted without returning or raising")
 
     def _get_json(
         self,
@@ -165,11 +224,62 @@ class OnlinekommentarClient:
             timeout=request_timeout,
         )
 
-    def get_commentary(self, commentary_id: str) -> Commentary:
-        """Retrieve a specific commentary by ID."""
-        return Commentary.from_json(self.get_commentary_raw(commentary_id))
+    def iter_commentaries(
+        self,
+        language: str | None = None,
+        search: str | None = None,
+        legislative_act: str | None = None,
+        sort: str | None = None,
+        *,
+        start_page: int = 1,
+        max_pages: int = 10,
+        request_timeout: float | None = None,
+    ) -> Iterator[Commentary]:
+        """Yield commentaries while retaining filters and bounding page requests.
 
-    def get_commentary_raw(self, commentary_id: str) -> dict[str, Any]:
+        Args:
+            language: Content language; defaults to the configured language.
+            search: Full-text search query.
+            legislative_act: Legislative act identifier.
+            sort: API sort order.
+            start_page: First page to request, starting at one.
+            max_pages: Maximum number of pages to fetch.
+            request_timeout: Optional timeout for each page request.
+
+        Raises:
+            PaginationLimitError: More pages remain after the cap; yielded items are partial.
+            ValueError: Bounds are invalid or the server returns an unexpected page number.
+        """
+        for name, value in (("start_page", start_page), ("max_pages", max_pages)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        for page in range(start_page, start_page + max_pages):
+            result = self.list_commentaries(
+                language=language,
+                search=search,
+                legislative_act=legislative_act,
+                sort=sort,
+                page=page,
+                request_timeout=request_timeout,
+            )
+            if result.current_page is not None and result.current_page != page:
+                raise ValueError("API returned an unexpected page number")
+            yield from result.commentaries
+            if not result.next_page_url:
+                return
+        raise PaginationLimitError("Page limit reached; commentary results are incomplete")
+
+    def get_commentary(
+        self, commentary_id: str, *, request_timeout: float | None = None
+    ) -> Commentary:
+        """Retrieve a specific commentary by ID."""
+        return Commentary.from_json(
+            self.get_commentary_raw(commentary_id, request_timeout=request_timeout)
+        )
+
+    def get_commentary_raw(
+        self, commentary_id: str, *, request_timeout: float | None = None
+    ) -> dict[str, Any]:
         """Return the raw JSON response for a specific commentary by ID."""
         if (
             not isinstance(commentary_id, str)
@@ -177,7 +287,9 @@ class OnlinekommentarClient:
             or commentary_id in {".", ".."}
         ):
             raise ValueError("commentary_id must be a nonempty identifier, not a dot segment")
-        return self._get_json(f"/api/commentaries/{_quote_segment(commentary_id)}")
+        return self._get_json(
+            f"/api/commentaries/{_quote_segment(commentary_id)}", timeout=request_timeout
+        )
 
     # OAI-PMH helpers
 
@@ -226,17 +338,25 @@ class OnlinekommentarClient:
             timeout=request_timeout,
         )
 
-    def identify(self) -> str:
+    def identify(self, *, request_timeout: float | None = None) -> str:
         """Get OAI-PMH repository information."""
-        return self.oai("Identify")
+        return self.oai("Identify", request_timeout=request_timeout)
 
-    def list_metadata_formats(self, identifier: str | None = None) -> str:
+    def list_metadata_formats(
+        self, identifier: str | None = None, *, request_timeout: float | None = None
+    ) -> str:
         """List available OAI-PMH metadata formats."""
-        return self.oai("ListMetadataFormats", identifier=identifier)
+        return self.oai(
+            "ListMetadataFormats", identifier=identifier, request_timeout=request_timeout
+        )
 
-    def list_sets(self, resumption_token: str | None = None) -> str:
+    def list_sets(
+        self, resumption_token: str | None = None, *, request_timeout: float | None = None
+    ) -> str:
         """List available OAI-PMH sets."""
-        return self.oai("ListSets", resumption_token=resumption_token)
+        return self.oai(
+            "ListSets", resumption_token=resumption_token, request_timeout=request_timeout
+        )
 
     def list_identifiers(
         self,
@@ -245,6 +365,8 @@ class OnlinekommentarClient:
         until: str | None = None,
         set_spec: str | None = None,
         resumption_token: str | None = None,
+        *,
+        request_timeout: float | None = None,
     ) -> str:
         """List OAI-PMH record identifiers.
 
@@ -260,6 +382,7 @@ class OnlinekommentarClient:
             until=until,
             set_spec=set_spec,
             resumption_token=resumption_token,
+            request_timeout=request_timeout,
         )
 
     def list_records(
@@ -269,6 +392,8 @@ class OnlinekommentarClient:
         until: str | None = None,
         set_spec: str | None = None,
         resumption_token: str | None = None,
+        *,
+        request_timeout: float | None = None,
     ) -> str:
         """Harvest OAI-PMH metadata records.
 
@@ -284,12 +409,20 @@ class OnlinekommentarClient:
             until=until,
             set_spec=set_spec,
             resumption_token=resumption_token,
+            request_timeout=request_timeout,
         )
 
-    def get_record(self, identifier: str, metadata_prefix: str = "oai_dc") -> str:
+    def get_record(
+        self,
+        identifier: str,
+        metadata_prefix: str = "oai_dc",
+        *,
+        request_timeout: float | None = None,
+    ) -> str:
         """Retrieve one OAI-PMH record."""
         return self.oai(
             "GetRecord",
             metadata_prefix=metadata_prefix,
             identifier=identifier,
+            request_timeout=request_timeout,
         )

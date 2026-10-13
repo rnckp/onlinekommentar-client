@@ -2,10 +2,32 @@
 
 from typing import Annotated, Any, Self
 
-from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    AliasChoices,
+    AliasPath,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
-NonemptyString = Annotated[str, Field(min_length=1)]
-Identifier = Annotated[str, Field(coerce_numbers_to_str=True, strict=False, min_length=1)]
+
+def _reject_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("String must not be blank")
+    return value
+
+
+def _normalize_identifier(value: Any) -> Any:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return value
+
+
+NonemptyString = Annotated[str, Field(min_length=1), AfterValidator(_reject_blank)]
+Identifier = Annotated[NonemptyString, BeforeValidator(_normalize_identifier)]
 PageNumber = Annotated[int, Field(ge=1)]
 NonnegativeInt = Annotated[int, Field(ge=0)]
 
@@ -71,7 +93,7 @@ class Commentary(_APIModel):
     def from_json(cls, data: dict[str, Any]) -> Self:
         """Validate a direct or wrapped commentary, preserving the full response."""
         payload = data
-        if "id" not in data and isinstance(data.get("data"), dict):
+        if "id" not in data and "commentary_id" not in data and isinstance(data.get("data"), dict):
             payload = data["data"]
         return cls.model_validate({**payload, "raw": data})
 
