@@ -1,5 +1,7 @@
 # Notes
 
+- Required CI covers Python 3.12–3.14. A local Python 3.15 smoke test passed on macOS arm64 on 2026-10-14, but the locked `pydantic-core` needed a source build. Keep 3.15 outside required CI until eligible wheels make setup fast and reproducible; a local pass does not establish Linux compatibility.
+
 - `GET /api/commentaries/{id}` may return a single-resource payload wrapped as `{"data": {...}}`; `Commentary.from_json()` intentionally accepts both wrapped detail responses and direct commentary dictionaries.
 - The distribution is named `onlinekommentar-client`, while its import package is `onlinekommentar`. The uv build backend needs an explicit `module-name` for the `src/onlinekommentar` layout. Tests deliberately avoid `pythonpath` overrides. If an editable install is stale, use `uv sync --reinstall-package onlinekommentar-client`.
 - Pydantic hides input values in formatted validation errors, but structured `ValidationError.errors()` output can still contain inputs. Avoid logging raw error details or API payloads. Model lists and `raw` dictionaries remain mutable despite frozen model fields. See [README.md](README.md) for the public model contract.

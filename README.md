@@ -8,7 +8,7 @@ This project is not official, associated with, or affiliated with Onlinekommenta
 
 ## Installation
 
-Requires Python 3.13 or newer and `uv`. From the repository root, install the
+Requires Python 3.12 or newer and `uv`. From the repository root, install the
 package and declared development dependencies:
 
 ```bash
@@ -299,9 +299,9 @@ The build command uses the declared backend through PEP 517 even when the instal
 uv CLI is newer than the backend's supported range.
 
 CI runs on pull requests and pushes to `main`. `Quality` checks all tracked files,
-runs offline tests on Python 3.13, and builds the distributions. `Python 3.14` runs
-compatibility tests without repeating lint or hooks. Both checks are required on
-`main`. Redundant CI runs are canceled; jobs have ten-minute timeouts and read-only
+runs offline tests on Python 3.12, and builds the distributions. `Python 3.13` and
+`Python 3.14` run compatibility tests without repeating lint or hooks. All three
+checks are required on `main`. Redundant CI runs are canceled; jobs have ten-minute timeouts and read-only
 permissions. Gitleaks is skipped in CI because its staged-change hook cannot scan
 PR history; GitHub secret scanning and push protection cover remote commits.
 Local hooks remain useful for catching credentials before they reach GitHub.
@@ -314,12 +314,12 @@ weekly, groups routine updates, and applies a seven-day cooldown. Urgent securit
 fixes may need an explicit exception to uv's seven-day resolution cooldown.
 
 GitHub defaults: PRs into `main`, one approval of the latest reviewable push,
-resolved conversations, passing `Quality` and `Python 3.14`, blocked force pushes
-and branch deletion, squash merges, and automatic deletion of merged branches.
+resolved conversations, passing `Quality`, `Python 3.13`, and `Python 3.14`, blocked
+force pushes and branch deletion, squash merges, and automatic deletion of merged branches.
 Administrators can bypass requirements through a PR for exceptional cases; direct
 pushes remain blocked. Keep deployment and publishing workflows out until a
 release process is needed.
-After pushing, verify that the two required checks are reported by hosted CI.
+After pushing, verify that the three required checks are reported by hosted CI.
 
 To run the same vulnerability check locally (contacts external package/advisory services):
 

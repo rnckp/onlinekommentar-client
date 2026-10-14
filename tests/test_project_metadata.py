@@ -2,6 +2,14 @@ import tomllib
 from pathlib import Path
 
 
+def test_python_312_is_the_supported_minimum() -> None:
+    root = Path(__file__).resolve().parents[1]
+    metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    assert metadata["project"]["requires-python"] == ">=3.12"
+    assert metadata["tool"]["ruff"]["target-version"] == "py312"
+    assert (root / ".python-version").read_text().strip() == "3.12"
+
+
 def test_jupyter_is_not_a_runtime_dependency() -> None:
     metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
