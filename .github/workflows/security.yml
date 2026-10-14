@@ -33,6 +33,4 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - name: Audit locked runtime and development dependencies
-        run: |
-          uv export --locked --all-groups --no-emit-project --output-file "$RUNNER_TEMP/requirements.txt"
-          uv run --no-sync pip-audit --requirement "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --strict
+        run: uv audit --locked --preview-features audit-command

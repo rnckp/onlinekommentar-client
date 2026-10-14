@@ -324,9 +324,7 @@ After pushing, verify that the two required checks are reported by hosted CI.
 To run the same vulnerability check locally (contacts external package/advisory services):
 
 ```bash
-uv export --locked --all-groups --no-emit-project --output-file /tmp/onlinekommentar-requirements.txt
-uv run pip-audit -r /tmp/onlinekommentar-requirements.txt --no-deps --disable-pip --strict
-rm /tmp/onlinekommentar-requirements.txt
+uv audit --locked --preview-features audit-command
 ```
 
 `client.py` handles synchronous HTTP requests and rate limiting, `config.py` loads
