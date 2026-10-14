@@ -68,7 +68,7 @@ class OnlinekommentarConfig(BaseModel):
         if not parsed.hostname:
             raise ValueError("base_url must include a host")
         try:
-            parsed.port
+            _ = parsed.port  # Access validates the port range and syntax.
         except ValueError as error:
             raise ValueError("base_url must have a valid port") from error
         if parsed.query or parsed.fragment or "?" in value or "#" in value:
