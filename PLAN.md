@@ -1,4 +1,7 @@
-# Deferred review items
+# Open tasks
+
+Unresolved implementation, compatibility, and infrastructure work. See
+[NOTES.md](NOTES.md) for established constraints and historical evidence.
 
 - After pushing the CI changes, verify successful hosted `Quality`, `Python 3.13`,
   and `Python 3.14` checks and the dependency audit. Confirm Dependabot update runs;
