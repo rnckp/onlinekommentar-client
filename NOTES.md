@@ -6,7 +6,7 @@
 - `quote(..., safe="")` does not escape dot segments. Empty, `.` and `..` commentary IDs must be rejected before HTTPX normalizes the request path. Base URLs must also reject query/fragment components to keep endpoint concatenation valid.
 - This repository is a synchronous client library. Application-level Docker, logging configuration, health endpoints, and telemetry are intentionally left to consuming applications.
 - OAI list helpers use `metadata_prefix=None` to distinguish omission from an explicit format. This lets initial requests default to `oai_dc` while continuation requests reject explicit formats. Preserve this distinction when changing the signatures; see the token rules in [README.md](README.md).
-- The notebook tests require empty saved outputs and unset execution counts before running tutorial cells. The Ruff-only hooks do not clear them; use the cleanup command in [README.md](README.md) before committing an executed notebook. Preserve these assertions to keep live response data out of Git.
+- The notebook tests require empty saved outputs and unset execution counts before running tutorial cells. The notebook pre-commit hook clears them; the cleanup command in [README.md](README.md) also works manually. Preserve these assertions to keep live response data out of Git.
 - `discover_config=False` disables only implicit working-directory discovery. Explicit config paths still load and validate before constructor overrides. Client tests run from temporary working directories so repository/user config cannot affect their defaults.
 - CI pins uv 0.13.0 and builds with `--force-pep517` to use the declared uv_build backend range. Keep this flag when upgrading the CLI, whose bundled build backend may fall outside that range.
 

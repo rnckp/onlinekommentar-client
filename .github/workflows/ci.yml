@@ -1,24 +1,23 @@
 name: CI
 
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
+    name: Quality
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.13", "3.14"]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,15 +25,32 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.13.0"
-          python-version: ${{ matrix.python }}
+          python-version-file: .python-version
           enable-cache: true
       - run: uv sync --locked
-      - run: uv run --locked ruff format --check .
-      - run: uv run --locked ruff check .
-      - run: uv run --locked pytest
-      - run: uv run --locked pre-commit run --all-files
-      - run: uv build --force-pep517
-      - name: Audit locked dependencies
-        run: |
-          uv export --locked --all-groups --no-emit-project --output-file "$RUNNER_TEMP/requirements.txt"
-          uv run --locked pip-audit --requirement "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --strict
+      - name: Check all tracked files
+        # Gitleaks scans staged changes locally. GitHub secret scanning and push
+        # protection cover remote commits; an empty CI index cannot do that.
+        env:
+          SKIP: gitleaks
+        run: uv run --no-sync pre-commit run --all-files
+      - name: Run offline tests
+        run: uv run --no-sync pytest -q
+      - name: Build distributions
+        run: uv build --force-pep517
+
+  compatibility:
+    name: Python 3.14
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.0"
+          python-version: "3.14"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --no-sync pytest -q

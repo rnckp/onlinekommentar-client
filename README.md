@@ -278,22 +278,48 @@ uv run pre-commit run --all-files
 uv build --force-pep517
 ```
 
-The local hooks run Ruff formatting and lint checks, including notebooks. They do
-not clear notebook outputs/execution counts; tests require those to be empty.
-Before committing an executed notebook, run
+Local hooks run Ruff lint with safe fixes, then formatting, using the version in
+`uv.lock`. Run `uv sync` first: hooks use `--no-sync` and do not install dependencies
+while committing. Checks operate on staged filenames and include Python notebooks.
+File hooks validate YAML/JSON, reject conflict markers, detect private keys, fix
+whitespace, and reject newly added files larger than 1 MB. Add narrow exceptions
+only for intentional assets. Gitleaks scans staged changes for credentials; its
+first run installs a Go-based hook environment, which is reused afterward.
+Review and stage any hook fixes before committing again.
+
+The notebook hook clears saved outputs and execution counts; tests enforce that
+committed notebooks remain clean. To clear an executed notebook manually, run
 `uv run python scripts/clear_notebook_outputs.py examples/onlinekommentar_demo.ipynb`.
 The cleanup command returns 1 when it changes files and 0 when no changes are
 needed; review and stage the cleared notebook before committing.
-The build command uses the declared backend through PEP 517 even when the installed
-uv CLI is newer than the backend's supported range.
 
 The package lives in `src/onlinekommentar` and uses the `uv_build` backend. Tests
 import the installed package; run `uv sync` after cloning or changing build metadata.
-CI checks Python 3.13 and 3.14, formatting, lint, tests, hooks, distribution builds,
-and the locked dependencies for known vulnerabilities. It also runs weekly.
-Actions are pinned to full commit SHAs; Dependabot is configured to monitor uv
-dependencies and GitHub Actions weekly. Repository settings and successful hosted runs must
-still be verified after pushing the branch.
+The build command uses the declared backend through PEP 517 even when the installed
+uv CLI is newer than the backend's supported range.
+
+CI runs on pull requests and pushes to `main`. `Quality` checks all tracked files,
+runs offline tests on Python 3.13, and builds the distributions. `Python 3.14` runs
+compatibility tests without repeating lint or hooks. Both checks are required on
+`main`. Redundant CI runs are canceled; jobs have ten-minute timeouts and read-only
+permissions. Gitleaks is skipped in CI because its staged-change hook cannot scan
+PR history; GitHub secret scanning and push protection cover remote commits.
+Local hooks remain useful for catching credentials before they reach GitHub.
+
+Dependency auditing runs separately for dependency changes and weekly, and can
+be triggered manually. It is not a required status check because its workflow is
+filtered by paths. Review failures before merging dependency updates and respond
+to scheduled findings. Dependabot monitors uv, GitHub Actions, and external hooks
+weekly, groups routine updates, and applies a seven-day cooldown. Urgent security
+fixes may need an explicit exception to uv's seven-day resolution cooldown.
+
+GitHub defaults: PRs into `main`, one approval of the latest reviewable push,
+resolved conversations, passing `Quality` and `Python 3.14`, blocked force pushes
+and branch deletion, squash merges, and automatic deletion of merged branches.
+Administrators can bypass requirements through a PR for exceptional cases; direct
+pushes remain blocked. Keep deployment and publishing workflows out until a
+release process is needed.
+After pushing, verify that the two required checks are reported by hosted CI.
 
 To run the same vulnerability check locally (contacts external package/advisory services):
 
