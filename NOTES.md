@@ -34,3 +34,7 @@ results or establish current service availability. Tests use synthetic responses
 
 Complete harvesting and every filter combination remain unverified. Follow-up
 checks are tracked in [PLAN.md](PLAN.md).
+
+## 2026-10-26: eMudhra/emSign certificate update
+
+Require certifi >=2026.10.19; only certifi and affected pip changed package versions. Keep the seven-day cooldown. Remove only the incident certifi exception after 2026-10-27 03:24:17 Europe/Zurich, then relock and sync. Build/CI uv pins are 0.13.5; Python image stages patch existing pip with secure uv. Deployment images still require a fresh build (`--pull --no-cache`) and verification before redeployment. Advisory: https://discuss.python.org/t/109576.
