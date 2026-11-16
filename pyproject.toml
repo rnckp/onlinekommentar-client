@@ -33,10 +33,6 @@ dev = [
 ]
 
 [tool.uv]
-constraint-dependencies = ["certifi>=2026.10.19"]
-# eMudhra/emSign: remove only certifi exceptions once artifacts age seven days.
-# virtualenv: remove once 21.14.13 (GHSA-cx6f-vjhg-g3cc fix, released 2026-10-22) is seven days old.
-exclude-newer-package = { certifi = false, virtualenv = false }
 exclude-newer = "7 days"
 
 [tool.pytest.ini_options]
